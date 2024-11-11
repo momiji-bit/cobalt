@@ -1,0 +1,952 @@
+// filename: cw1_student.uclcg
+// tabGroup: Coursework
+// thumbnail: cw1_thumb.png
+// displayname: Coursework 1 - 2024/2025
+// shortDescription: Coursework 1 - Ray Tracing
+// author: None
+// isHidden: false 
+function setup()
+{
+	UI = {};
+	UI.tabs = [];
+	UI.titleLong = 'Ray Tracer';
+	UI.titleShort = 'RayTracerSimple';
+	UI.numFrames = 100000;
+	UI.maxFPS = 24;
+	UI.renderWidth = 1600;
+	UI.renderHeight = 800;
+
+	UI.tabs.push(
+		{
+		visible: true,
+		type: `x-shader/x-fragment`,
+		title: `RaytracingDemoFS - GL`,
+		id: `RaytracingDemoFS`,
+		initialValue: `
+#define SOLUTION_CYLINDER_AND_PLANE
+#define SOLUTION_SHADOW
+#define SOLUTION_REFLECTION_REFRACTION
+#define SOLUTION_FRESNEL
+
+#define SOLUTION_BOOLEAN
+
+precision highp float;  // Precision setting and global variables
+uniform ivec2 viewport; 
+
+// Structure definitions
+struct PointLight {  // Point light structure with position and color
+	vec3 position;
+	vec3 color;
+};
+
+struct Material {  // Material structure with diffuse color, specular color, glossiness, reflection, refraction, and index of refraction
+	vec3  diffuse;
+	vec3  specular;
+	float glossiness;
+	float reflection;
+	float refraction;
+	float ior;
+};
+
+struct Sphere {  // Sphere structure with position, radius, and material
+	vec3 position;
+	float radius;
+	Material material;
+};
+
+struct Plane {  // Plane structure with normal vector, distance, and material
+	vec3 normal;
+	float d;
+	Material material;
+};
+
+struct Cylinder {  // Cylinder structure with position, direction, radius, and material
+	vec3 position;
+	vec3 direction;
+	float radius;
+	Material material;
+};
+
+// Boolean operation types
+const int BOOLEAN_MODE_AND = 0;		// and 
+const int BOOLEAN_MODE_MINUS = 1;	// minus 
+
+struct Boolean {  // Boolean structure with two spheres and a mode for boolean operation
+	Sphere spheres[2];
+	int mode;
+};
+
+// Scene element counts for lights, spheres, planes, cylinders, and booleans
+const int lightCount = 2;
+const int sphereCount = 3;
+const int planeCount = 1;
+const int cylinderCount = 2;
+const int booleanCount = 2; 
+
+struct Scene {  // Scene structure containing ambient light color, arrays of lights, spheres, planes, cylinders, and booleans
+	vec3 ambient;
+	PointLight[lightCount] lights;
+	Sphere[sphereCount] spheres;
+	Plane[planeCount] planes;
+	Cylinder[cylinderCount] cylinders;
+	Boolean[booleanCount] booleans;
+};
+
+struct Ray {  // Ray structure with origin and direction
+	vec3 origin;
+	vec3 direction;
+};
+
+// Stores ray-object intersection information
+// HitInfo structure with details on ray-object intersection
+struct HitInfo {  
+	bool hit;  // Whether intersection occurred
+	float t;  // Intersection distance t
+	vec3 position;  // Intersection point position
+	vec3 normal;  // Surface normal at intersection
+	Material material;  // Material at intersection
+	bool enteringPrimitive;  // Whether ray enters the object
+};
+
+HitInfo getEmptyHit() {  // Returns default HitInfo, representing no intersection
+	return HitInfo(
+		false, 
+		0.0, 
+		vec3(0.0), 
+		vec3(0.0), 
+		Material(vec3(0.0), vec3(0.0), 0.0, 0.0, 0.0, 0.0),
+		false);
+}
+
+// Sorts two t values so that t1 < t2
+void sortT(inout float t1, inout float t2) {
+	// Ensure t1 is the smaller value
+	if(t2 < t1)  {
+		float temp = t1;
+		t1 = t2;
+		t2 = temp;
+	}
+}
+
+// Checks if t is within the interval [tMin, tMax]
+bool isTInInterval(const float t, const float tMin, const float tMax) {
+	return t > tMin && t < tMax;
+}
+
+// Finds the smallest t within the interval [tMin, tMax] and returns the result
+bool getSmallestTInInterval(float t0, float t1, const float tMin, const float tMax, inout float smallestTInInterval) {
+
+	sortT(t0, t1);
+
+	// Check if t0 is in the interval first since it’s smaller
+	if(isTInInterval(t0, tMin, tMax)) {
+		smallestTInInterval = t0;
+		return true;
+	}
+
+	// If t0 is not in interval, check if t1 is
+	if(isTInInterval(t1, tMin, tMax)) {
+		smallestTInInterval = t1;
+		return true;
+	}  
+
+	// Neither t0 nor t1 was in the interval
+	return false;
+}
+
+// Ray-sphere intersection detection
+HitInfo intersectSphere(const Ray ray, const Sphere sphere, const float tMin, const float tMax) {
+
+	vec3 to_sphere = ray.origin - sphere.position;
+
+	float a = dot(ray.direction, ray.direction);
+	float b = 2.0 * dot(ray.direction, to_sphere);
+	float c = dot(to_sphere, to_sphere) - sphere.radius * sphere.radius;
+	float D = b * b - 4.0 * a * c;
+	if (D > 0.0)
+	{
+		float t0 = (-b - sqrt(D)) / (2.0 * a);
+		float t1 = (-b + sqrt(D)) / (2.0 * a);
+
+		float smallestTInInterval;
+		if(!getSmallestTInInterval(t0, t1, tMin, tMax, smallestTInInterval)) {
+			return getEmptyHit();
+		}
+
+		vec3 hitPosition = ray.origin + smallestTInInterval * ray.direction;      
+
+		// Check if inside sphere by origin. If inside, normal at surface points toward center for refraction; 
+		// if outside, normal points outward.
+		vec3 normal = 
+			length(ray.origin - sphere.position) < sphere.radius + 0.001 ? 
+			-normalize(hitPosition - sphere.position) : 
+		normalize(hitPosition - sphere.position);      
+
+		// Check if inside for IOR tracking; set flag if leaving or entering, crucial for refraction.
+		bool enteringPrimitive = 
+			length(ray.origin - sphere.position) < sphere.radius + 0.001 ? 
+			false : true; 
+
+		return HitInfo(
+			true,
+			smallestTInInterval,
+			hitPosition,
+			normal,
+			sphere.material,
+			enteringPrimitive);
+	}
+	return getEmptyHit();
+}
+
+// Implements ray-plane intersection detection
+HitInfo intersectPlane(const Ray ray,const Plane plane, const float tMin, const float tMax) {
+	// Compute dot product of ray direction and plane normal
+	float denominator = dot(ray.direction, plane.normal);  // Checks if ray intersects with plane
+
+	// If dot product is close to zero, ray is parallel to plane, no intersection
+	if (abs(denominator) > 0.0001) {
+		// Calculate distance from ray origin to plane
+		float t = -(dot(ray.origin, plane.normal) + plane.d) / denominator;
+
+		// Check if t is within valid range
+		if (t > tMin && t < tMax) {
+			vec3 hitPosition = ray.origin + t * ray.direction;  // Compute intersection position
+			vec3 normal = normalize(plane.normal);  // Keep plane normal direction unchanged
+
+			// Return intersection information
+			return HitInfo(
+				true,  // Intersection occurred
+				t,  // Intersection distance
+				hitPosition,  // Intersection position
+				normal,  // Normal vector
+				plane.material,  // Plane material
+				denominator < 0.0  // Indicates if ray is entering the plane
+			);
+		}
+	}
+
+	// Return empty HitInfo if no intersection
+	return getEmptyHit();
+}
+
+// Returns squared length of a vector, useful for quick length comparisons
+float lengthSquared(vec3 x) {
+	return dot(x, x);
+}
+// Ray-cylinder intersection detection
+HitInfo intersectCylinder(const Ray ray, const Cylinder cylinder, const float tMin, const float tMax) {
+	vec3 ca = cylinder.direction;  // Cylinder's direction vector
+	vec3 oc = ray.origin - cylinder.position;  // Vector from ray origin to cylinder's base center
+
+	float card = dot(ca, ray.direction);  // Component of ray along cylinder's direction
+	float caoc = dot(ca, oc);  // Projection of oc onto cylinder's direction
+	float a = lengthSquared(ray.direction) - card * card;
+	float b = dot(ray.direction, oc) - card * caoc;
+	float c = lengthSquared(oc) - caoc * caoc - cylinder.radius * cylinder.radius;
+	float h = b * b - a * c;
+
+	if (h > 0.0) {  // Indicates two intersection points
+		// Two intersection points t0 and t1 representing distances along the ray direction
+		h = sqrt(h);
+		float t0 = (-b - h) / a;
+		float t1 = (-b + h) / a;
+
+		float smallestTInInterval;  // Check if t0 and t1 are within [tMin, tMax] and get the smallest valid intersection
+		if (getSmallestTInInterval(t0, t1, tMin, tMax, smallestTInInterval)) {
+			vec3 hitPosition = ray.origin + smallestTInInterval * ray.direction;  // Ray-cylinder intersection point
+			vec3 normal = normalize(hitPosition - cylinder.position - dot(hitPosition - cylinder.position, ca) * ca);  // Normal at intersection point
+
+			return HitInfo(
+				true,  // Intersection occurred
+				smallestTInInterval,  // Intersection distance
+				hitPosition,  // Intersection position
+				normal,  // Normal vector
+				cylinder.material,  // Cylinder's material
+				true  // Assumes ray enters the cylinder
+			);
+		}
+	}
+	return getEmptyHit();
+}
+
+// Checks if a given point is inside a sphere
+bool inside(const vec3 position, const Sphere sphere) {
+	return length(position - sphere.position) < sphere.radius;
+}
+
+// Detects intersection between ray and boolean geometry
+HitInfo intersectBoolean(const Ray ray, const Boolean boolean, const float tMin, const float tMax) {
+	#ifdef SOLUTION_BOOLEAN
+	// Retrieve the two spheres
+	Sphere spheresA = boolean.spheres[0];
+	Sphere spheresB = boolean.spheres[1];
+
+	// Get intersection information for both spheres
+	HitInfo hitA = intersectSphere(ray, spheresA, tMin, tMax);
+	HitInfo hitB = intersectSphere(ray, spheresB, tMin, tMax);
+
+	// If neither sphere is intersected, return empty HitInfo
+	if (!hitA.hit && !hitB.hit) {
+		return getEmptyHit();
+	}
+
+	if (boolean.mode == BOOLEAN_MODE_AND) {
+		// Boolean operation: Intersection (AND)
+		// Requires both spheres to be intersected
+
+		// Assign closer intersection to hitA and farther one to hitB
+		if (hitA.t > hitB.t) {
+			HitInfo temp = hitA;
+			hitA = hitB;
+			hitB = temp;
+		}
+
+		// If either sphere isn’t intersected, return empty HitInfo
+		if (!hitA.hit || !hitB.hit) {
+			return getEmptyHit();
+		}
+
+		// Check if ray origin is outside both spheres
+		if (!inside(ray.origin, spheresA) && !inside(ray.origin, spheresB)) {
+			// If so, farther intersection point might be valid
+			if (inside(hitB.position, spheresA) || inside(hitB.position, spheresB)) {
+				return hitB;
+			} else {
+				return getEmptyHit();
+			}
+		} else {
+			// Otherwise, closer intersection point might be valid
+			if (inside(hitA.position, spheresA) || inside(hitA.position, spheresB)) {
+				return hitA;
+			} else {
+				return getEmptyHit();
+			}
+		}
+	} else if (boolean.mode == BOOLEAN_MODE_MINUS) {
+		// Boolean operation: Difference (B - A), subtracting A from B
+		// Here, hitA refers to A and hitB to B
+
+		// If neither intersects, return empty HitInfo
+		if (!hitA.hit && !hitB.hit) {
+			return getEmptyHit();
+		}
+
+		// If B is not intersected, return empty HitInfo
+		if (!hitB.hit) {
+			return getEmptyHit();
+		}
+
+		// If A is not intersected, return hitB’s information
+		if (!hitA.hit) {
+			return hitB;
+		}
+
+		// Check if ray origin is outside both spheres
+		if (!inside(ray.origin, spheresA) && !inside(ray.origin, spheresB)) {
+			// Compare which intersection is closer
+			if (hitB.t < hitA.t) {
+				// If B is intersected first, return hitB
+				return hitB;
+			} else {
+				// If A is intersected first
+				if (!inside(hitB.position, spheresA)) {
+					// If hitB position is outside A, return hitB
+					return hitB;
+				}
+				// Otherwise, check next intersection of B
+				Ray exray;
+				exray.origin = hitB.position;
+				exray.direction = ray.direction;
+				HitInfo hitA2 = intersectSphere(exray, spheresA, tMin, tMax);
+				if (inside(hitA2.position, spheresB)) {
+					return hitA2;
+				} else {
+					return getEmptyHit();
+				}
+			}
+		} else {
+			// Ray origin is inside one of the spheres
+			// If hitA position is inside B, return hitA
+			if (inside(hitA.position, spheresB)) {
+				return hitA;
+			} else {
+				return getEmptyHit();
+			}
+		}
+	}
+	#else
+	// Add your boolean operation code in the #ifdef block above!
+	#endif
+	return getEmptyHit();
+}
+
+uniform float time;
+
+// Returns the closer intersection info, i.e., the nearer hit point
+HitInfo getBetterHitInfo(const HitInfo oldHitInfo, const HitInfo newHitInfo) {
+	if(newHitInfo.hit)
+		if(newHitInfo.t < oldHitInfo.t)  // No need to test for interval; this should be checked per-primitive
+			return newHitInfo;
+	return oldHitInfo;
+}
+
+// Checks intersection for all geometries in the scene, finding the earliest intersection with the ray
+HitInfo intersectScene(const Scene scene, const Ray ray, const float tMin, const float tMax) {
+	HitInfo bestHitInfo;
+	bestHitInfo.t = tMax;
+	bestHitInfo.hit = false;
+
+	for (int i = 0; i < booleanCount; ++i) {
+		bestHitInfo = getBetterHitInfo(bestHitInfo, intersectBoolean(ray, scene.booleans[i], tMin, tMax));
+	}
+
+	for (int i = 0; i < planeCount; ++i) {
+		bestHitInfo = getBetterHitInfo(bestHitInfo, intersectPlane(ray, scene.planes[i], tMin, tMax));
+	}
+	for (int i = 0; i < sphereCount; ++i) {
+		bestHitInfo = getBetterHitInfo(bestHitInfo, intersectSphere(ray, scene.spheres[i], tMin, tMax));
+	}
+	for (int i = 0; i < cylinderCount; ++i) {
+		bestHitInfo = getBetterHitInfo(bestHitInfo, intersectCylinder(ray, scene.cylinders[i], tMin, tMax));
+	}
+
+	return bestHitInfo;
+}
+
+// Computes lighting at the surface, including diffuse and specular components
+vec3 shadeFromLight(
+	const Scene scene,
+	const Ray ray,
+	const HitInfo hit_info,
+	const PointLight light)
+{ 
+	// Compute direction from hit point to the light source
+	vec3 hitToLight = light.position - hit_info.position;
+	vec3 lightDirection = normalize(hitToLight);
+	// Calculate contributions of diffuse and specular reflection
+	vec3 viewDirection = normalize(hit_info.position - ray.origin);
+	vec3 reflectedDirection = reflect(viewDirection, hit_info.normal);
+	float diffuse_term = max(0.0, dot(lightDirection, hit_info.normal));
+	float specular_term  = pow(max(0.0, dot(lightDirection, reflectedDirection)), hit_info.material.glossiness);
+
+	#ifdef SOLUTION_SHADOW
+	// Create a shadow ray from hit point towards the light source
+	Ray shadowRay;
+	shadowRay.origin = hit_info.position + 0.001 * lightDirection; // Offset to prevent self-intersection
+	shadowRay.direction = lightDirection;
+	// Check if shadow ray intersects any object in the scene
+	float lightDistance = length(hitToLight);
+	HitInfo shadowHit = intersectScene(scene, shadowRay, 0.001, lightDistance);
+	// If shadow ray intersects an object, the point is in shadow
+	float visibility = shadowHit.hit ? 0.0 : 1.0;
+	#else
+	// Place shadow test here if needed
+	float visibility = 1.0;
+	#endif
+
+	// Return the final lighting contribution, factoring in visibility
+	return 	visibility * 
+		light.color * (
+			specular_term * hit_info.material.specular +
+			diffuse_term * hit_info.material.diffuse);
+}
+
+vec3 background(const Ray ray) {
+	// A simple implicit sky used for background color
+	return vec3(0.2) + vec3(0.8, 0.6, 0.5) * max(0.0, ray.direction.y);
+}
+
+// Computes pixel color, considering ambient light and contributions from all light sources
+vec3 shade(const Scene scene, const Ray ray, inout HitInfo hitInfo) {
+
+	if(!hitInfo.hit) {
+		return background(ray);
+	}
+
+	vec3 shading = scene.ambient * hitInfo.material.diffuse;
+	for (int i = 0; i < lightCount; ++i) {
+		shading += shadeFromLight(scene, ray, hitInfo, scene.lights[i]); 
+	}
+	return shading;
+}
+
+// Generates a ray for each pixel on the screen
+Ray getFragCoordRay(const vec2 frag_coord) {
+	float sensorDistance = 1.0;
+	vec2 sensorMin = vec2(-1, -0.5);
+	vec2 sensorMax = vec2(1, 0.5);
+	vec2 pixelSize = (sensorMax - sensorMin) / vec2(viewport.x, viewport.y);
+	vec3 origin = vec3(0, 0, sensorDistance);
+	vec3 direction = normalize(vec3(sensorMin + pixelSize * frag_coord, -sensorDistance));  
+
+	return Ray(origin, direction);
+}
+
+// Both fresnel types have been implemented
+float fresnel_(const vec3 viewDirection, const vec3 normal, const float sourceIOR, const float destIOR) {
+
+	// Using dot product method
+	#ifdef SOLUTION_FRESNEL
+
+	// Normalize view and normal vectors
+	vec3 V = normalize(-viewDirection);  // Invert view direction, as ray points from camera to object
+	vec3 N = normalize(normal);
+	// Compute cosine of angle between view direction and normal
+	float cosTheta = abs(dot(V, N));
+	// Use simple dot product to estimate Fresnel reflection coefficient
+	float fresnelCoeff = 1.0 - cosTheta;
+	// Ensure Fresnel coefficient is within valid range
+	fresnelCoeff = clamp(fresnelCoeff, 0.0, 1.0);
+	return fresnelCoeff;  // Return Fresnel reflection coefficient
+
+	#else
+	// Place your Fresnel effect calculation code in the ifdef above
+	return 1.0;
+	#endif
+}
+
+float fresnel(const vec3 viewDirection, const vec3 normal, const float sourceIOR, const float destIOR) {
+
+	// Schlick approximation method
+	#ifdef SOLUTION_FRESNEL
+
+	vec3 V = normalize(-viewDirection);
+	vec3 N = normalize(normal);
+	float cosTheta = abs(dot(V, N));
+	float R0 = pow((sourceIOR - destIOR) / (sourceIOR + destIOR), 2.0);
+	float fresnelCoeff = R0 + (1.0 - R0) * pow(1.0 - cosTheta, 5.0);
+	return clamp(fresnelCoeff, 0.0, 1.0); 
+
+	#else
+	// Place your code to compute the Fresnel effect in the #ifdef above
+	return 1.0;
+	#endif
+}
+
+// Computes the final color for a fragment, including initial reflection and refraction
+vec3 colorForFragment(const Scene scene, const vec2 fragCoord) {
+
+	Ray initialRay = getFragCoordRay(fragCoord);  
+	HitInfo initialHitInfo = intersectScene(scene, initialRay, 0.001, 10000.0);  
+	vec3 result = shade(scene, initialRay, initialHitInfo);
+
+	Ray currentRay;
+	HitInfo currentHitInfo;
+
+	// Reflection computation
+	currentRay = initialRay;
+	currentHitInfo = initialHitInfo;
+
+	// Initial reflection strength
+	float reflectionWeight = 1.0;
+
+	// Starting medium is air
+	float currentIOR = 1.0;
+
+	float sourceIOR = 1.0;
+	float destIOR = 1.0;
+
+	const int maxReflectionStepCount = 2;
+	for(int i = 0; i < maxReflectionStepCount; i++) {
+
+		if(!currentHitInfo.hit) break;
+
+		#ifdef SOLUTION_REFLECTION_REFRACTION
+		reflectionWeight *= currentHitInfo.material.reflection;
+		#else
+		// Place reflection weighting code in the ifdef above
+		#endif
+
+		#ifdef SOLUTION_FRESNEL
+		// Compute Fresnel reflection coefficient
+		float fresnelCoeff = fresnel(-currentRay.direction, currentHitInfo.normal, sourceIOR, destIOR);
+		reflectionWeight *= fresnelCoeff;  // Update reflection weight
+		#else
+		// Replace with Fresnel code if desired
+		reflectionWeight *= 0.5;
+		#endif
+
+		Ray nextRay;
+
+		#ifdef SOLUTION_REFLECTION_REFRACTION
+		// Compute reflection direction
+		vec3 incident = currentRay.direction;
+		vec3 normal = currentHitInfo.normal;
+		vec3 reflectedDirection = reflect(incident, normal);
+		nextRay.origin = currentHitInfo.position;
+		nextRay.direction = reflectedDirection;
+		#else
+		// Place reflection ray computation code in the ifdef above
+		#endif
+
+		currentRay = nextRay;
+
+		currentHitInfo = intersectScene(scene, currentRay, 0.001, 10000.0);      
+
+		result += reflectionWeight * shade(scene, currentRay, currentHitInfo);
+	}
+
+	// Refraction computation
+	currentRay = initialRay;  
+	currentHitInfo = initialHitInfo;
+
+	// Initial refraction strength
+	float refractionWeight = 1.0;
+
+	const int maxRefractionStepCount = 2;
+	for(int i = 0; i < maxRefractionStepCount; i++) {
+
+		#ifdef SOLUTION_REFLECTION_REFRACTION
+		refractionWeight *= currentHitInfo.material.refraction;   
+
+		#else
+		// Place refraction weighting code in the ifdef above
+		refractionWeight *= 0.5;
+		#endif
+
+		#ifdef SOLUTION_FRESNEL
+		// Compute Fresnel transmission coefficient (1 - reflection coefficient)
+		float fresnelCoeff = fresnel(-currentRay.direction, currentHitInfo.normal, sourceIOR, destIOR);
+		refractionWeight *= (1.0 - fresnelCoeff);  // Update refraction weight
+		#else
+		// Place Fresnel code in the ifdef above
+		#endif      
+
+		Ray nextRay;
+
+		#ifdef SOLUTION_REFLECTION_REFRACTION   
+		// Determine source and destination IOR for refraction
+		if (currentHitInfo.enteringPrimitive) {
+			// Ray is entering the object
+			sourceIOR = currentIOR;
+			destIOR = currentHitInfo.material.ior;
+			currentIOR = destIOR;  // Update current medium IOR
+		} else {
+			// Ray is exiting the object
+			sourceIOR = currentIOR;
+			destIOR = 1.0;  // Assuming outside medium is air
+			currentIOR = destIOR;  // Update current medium IOR
+		}
+		// Compute refracted direction
+		vec3 incident = currentRay.direction;
+		vec3 normal = currentHitInfo.normal;
+		float eta = sourceIOR / destIOR;
+		vec3 refractedDirection = refract(incident, normal, eta);
+
+		// Handle total internal reflection
+		if(length(refractedDirection) == 0.0) {
+			// Total internal reflection occurs; exit refraction loop
+			break;
+		}
+		currentRay.origin = currentHitInfo.position + 0.001 * refractedDirection;
+		currentRay.direction = refractedDirection;
+		#else
+		float sourceIOR;
+		float destIOR;
+		// Place refraction ray computation and IOR tracking code in the ifdef above
+		#endif
+		currentHitInfo = intersectScene(scene, currentRay, 0.001, 10000.0);
+
+		result += refractionWeight * shade(scene, currentRay, currentHitInfo);
+
+		if(!currentHitInfo.hit) break;
+
+	}
+	return result;
+}
+
+
+// Common materials
+// IOR data comes from https://refractiveindex.info/, otherwise zero
+// When reflection and refraction set to zero, it is turned off
+
+Material getDefaultMaterial() {
+	return Material(vec3(0.3), vec3(0), 0.0, 0.0, 0.0, 0.0);
+}
+
+Material getPaperMaterial() {
+	return Material(vec3(0.7, 0.7, 0.7), vec3(0, 0, 0), 5.0, 0.0, 0.0, 0.0);
+}
+
+Material getPlasticMaterial() {
+	return Material(vec3(0.9, 0.3, 0.1), vec3(1.0), 10.0, 0.9, 0.0, 1.5);
+}
+
+Material getGlassMaterial() {
+	return Material(vec3(0.0), vec3(0.0), 5.0, 1.0, 1.0, 1.5);
+}
+
+Material getSteelMirrorMaterial() {
+	return Material(vec3(0.1), vec3(0.3), 20.0, 0.8, 0.0, 2.9);
+}
+
+Material getMetaMaterial() {
+	return Material(vec3(0.1, 0.2, 0.5), vec3(0.3, 0.7, 0.9), 20.0, 0.8, 0.0, 0.0);
+}
+
+vec3 tonemap(const vec3 radiance) {
+	const float monitorGamma = 2.0;
+	return pow(radiance, vec3(1.0 / monitorGamma));
+}
+
+void main() {
+	// Setup scene
+	Scene scene;  // Create scene object
+	scene.ambient = vec3(0.12, 0.15, 0.2);  // Set ambient light color for the scene
+	scene.lights[0].position = vec3(5, 15, -5);  // Set position of the first light source
+	scene.lights[0].color    = 0.5 * vec3(0.9, 0.5, 0.1);  // Set color and intensity of the first light source
+
+	scene.lights[1].position = vec3(-15, 5, 2);  // Set position of the second light source
+	scene.lights[1].color    = 0.5 * vec3(0.1, 0.3, 1.0);  // Set color and intensity of the second light source
+
+	// Primitives
+	bool specialScene = true;  // Boolean variable to determine if a special scene is used
+
+	// Enable special scene setup if SOLUTION_BOOLEAN is defined
+	#ifdef SOLUTION_BOOLEAN
+	#endif
+
+	if (specialScene) {
+		// Boolean scene setup
+		scene.booleans[0].mode = BOOLEAN_MODE_MINUS;  // Set Boolean operation to difference mode
+
+		// Sphere A 
+		scene.booleans[0].spheres[0].position      	= vec3(3, 0, -10);  // Position of the first sphere in Boolean A
+		scene.booleans[0].spheres[0].radius      	= 2.75;  // Radius of the first sphere in Boolean A
+		scene.booleans[0].spheres[0].material      	= getPaperMaterial();  // Material of the first sphere in Boolean A
+
+		// Sphere B
+		scene.booleans[0].spheres[1].position      	= vec3(6, 1, -13);  // Position of the second sphere in Boolean A
+		scene.booleans[0].spheres[1].radius      	= 4.0;  // Radius of the second sphere in Boolean A
+		scene.booleans[0].spheres[1].material      	= getPaperMaterial();
+
+		scene.booleans[1].mode = BOOLEAN_MODE_AND;
+
+		scene.booleans[1].spheres[0].position      	= vec3(-3.0, 1, -12);
+		scene.booleans[1].spheres[0].radius      	= 4.0;
+		scene.booleans[1].spheres[0].material      	= getPaperMaterial();
+
+		scene.booleans[1].spheres[1].position      	= vec3(-6.0, 1, -12);	
+		scene.booleans[1].spheres[1].radius      	= 4.0;
+		scene.booleans[1].spheres[1].material      	= getMetaMaterial();
+
+		scene.planes[0].normal            		= normalize(vec3(0, 0.8, 0));
+		scene.planes[0].d              			= 4.5;
+		scene.planes[0].material				= getSteelMirrorMaterial();
+
+		scene.lights[0].position = vec3(-5, 25, -5);  // Left-right, up-down, forward-backward
+		scene.lights[0].color    = vec3(0.9, 0.5, 0.1);
+
+		scene.lights[1].position = vec3(-15, 5, 2);
+		scene.lights[1].color    = 0.0 * 0.5 * vec3(0.1, 0.3, 1.0);
+	}
+	else {
+		// Standard scene setup
+		// Set sphere 1 on the right
+		scene.spheres[0].position            	= vec3(10, -5, -16);  // Position of the first sphere
+		scene.spheres[0].radius              	= 6.0;  // Radius of the first sphere
+		scene.spheres[0].material 				= getPaperMaterial();  // Material of the first sphere
+
+		// Set sphere 2 in the center
+		scene.spheres[1].position            	= vec3(-7, -2, -13);  // Position of the second sphere
+		scene.spheres[1].radius             	= 4.0;  // Radius of the second sphere
+		scene.spheres[1].material				= getPlasticMaterial();  // Material of the second sphere
+
+		// Set sphere 3 on the left
+		scene.spheres[2].position            	= vec3(0, 0.5, -5);  // Position of the third sphere
+		scene.spheres[2].radius              	= 2.0;  // Radius of the third sphere
+		scene.spheres[2].material   			= getGlassMaterial();  // Material of the third sphere
+
+		// Set the plane
+		scene.planes[0].normal            		= normalize(vec3(0, 1.0, 0));  // Normal of the plane
+		scene.planes[0].d              			= 4.5;  // Offset position of the plane
+		scene.planes[0].material				= getSteelMirrorMaterial();  // Material of the plane
+
+		// Set first cylinder
+		scene.cylinders[0].position            	= vec3(-1, 1, -26);  // Position of the first cylinder
+		scene.cylinders[0].direction            = normalize(vec3(-2, 2, -1));  // Normalized direction of the first cylinder
+		scene.cylinders[0].radius         		= 1.5;  // Radius of the first cylinder
+		scene.cylinders[0].material				= getPaperMaterial();  // Material of the first cylinder
+
+		// Set second cylinder
+		scene.cylinders[1].position            	= vec3(4, 1, -5);  // Position of the second cylinder
+		scene.cylinders[1].direction            = normalize(vec3(1, 4, 1));  // Normalized direction of the second cylinder
+		scene.cylinders[1].radius         		= 0.4;  // Radius of the second cylinder
+		scene.cylinders[1].material				= getPlasticMaterial();  // Material of the second cylinder
+	}
+
+	// Compute color for fragment
+	gl_FragColor.rgb = tonemap(colorForFragment(scene, gl_FragCoord.xy));
+	gl_FragColor.a = 1.0;
+}
+`,
+		description: ``,
+		wrapFunctionStart: ``,
+		wrapFunctionEnd: ``
+	});
+
+	UI.tabs.push(
+		{
+		visible: false,
+		type: `x-shader/x-vertex`,
+		title: `RaytracingDemoVS - GL`,
+		id: `RaytracingDemoVS`,
+		initialValue: `attribute vec3 position;
+    uniform mat4 modelViewMatrix;
+    uniform mat4 projectionMatrix;
+  
+    void main(void) {
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+`,
+		description: ``,
+		wrapFunctionStart: ``,
+		wrapFunctionEnd: ``
+	});
+
+	 return UI; 
+}//!setup
+
+var gl;
+function initGL(canvas) {
+	try {
+		gl = canvas.getContext("experimental-webgl");
+		gl.viewportWidth = canvas.width;
+		gl.viewportHeight = canvas.height;
+	} catch (e) {
+	}
+	if (!gl) {
+		alert("Could not initialise WebGL, sorry :-(");
+	}
+}
+
+function getShader(gl, id) {
+	var shaderScript = document.getElementById(id);
+	if (!shaderScript) {
+		return null;
+	}
+
+	var str = "";
+	var k = shaderScript.firstChild;
+	while (k) {
+		if (k.nodeType == 3) {
+			str += k.textContent;
+		}
+		k = k.nextSibling;
+	}
+
+	var shader;
+	if (shaderScript.type == "x-shader/x-fragment") {
+		shader = gl.createShader(gl.FRAGMENT_SHADER);
+	} else if (shaderScript.type == "x-shader/x-vertex") {
+		shader = gl.createShader(gl.VERTEX_SHADER);
+	} else {
+		return null;
+	}
+
+    console.log(str);
+	gl.shaderSource(shader, str);
+	gl.compileShader(shader);
+
+	if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+		alert(gl.getShaderInfoLog(shader));
+		return null;
+	}
+
+	return shader;
+}
+
+function RaytracingDemo() {
+}
+
+RaytracingDemo.prototype.initShaders = function() {
+
+	this.shaderProgram = gl.createProgram();
+
+	gl.attachShader(this.shaderProgram, getShader(gl, "RaytracingDemoVS"));
+	gl.attachShader(this.shaderProgram, getShader(gl, "RaytracingDemoFS"));
+	gl.linkProgram(this.shaderProgram);
+
+	if (!gl.getProgramParameter(this.shaderProgram, gl.LINK_STATUS)) {
+		alert("Could not initialise shaders");
+	}
+
+	gl.useProgram(this.shaderProgram);
+
+	this.shaderProgram.vertexPositionAttribute = gl.getAttribLocation(this.shaderProgram, "position");
+	gl.enableVertexAttribArray(this.shaderProgram.vertexPositionAttribute);
+
+	this.shaderProgram.projectionMatrixUniform = gl.getUniformLocation(this.shaderProgram, "projectionMatrix");
+	this.shaderProgram.modelviewMatrixUniform = gl.getUniformLocation(this.shaderProgram, "modelViewMatrix");
+}
+
+RaytracingDemo.prototype.initBuffers = function() {
+	this.triangleVertexPositionBuffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, this.triangleVertexPositionBuffer);
+	
+	var vertices = [
+		 -1,  -1,  0,
+		 -1,  1,  0,
+		 1,  1,  0,
+
+		 -1,  -1,  0,
+		 1,  -1,  0,
+		 1,  1,  0,
+	 ];
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+	this.triangleVertexPositionBuffer.itemSize = 3;
+	this.triangleVertexPositionBuffer.numItems = 3 * 2;
+}
+
+function getTime() {  
+	var d = new Date();
+	return d.getMinutes() * 60.0 + d.getSeconds() + d.getMilliseconds() / 1000.0;
+}
+
+RaytracingDemo.prototype.drawScene = function() {
+			
+	var perspectiveMatrix = new J3DIMatrix4();	
+	perspectiveMatrix.setUniform(gl, this.shaderProgram.projectionMatrixUniform, false);
+
+	var modelViewMatrix = new J3DIMatrix4();	
+	modelViewMatrix.setUniform(gl, this.shaderProgram.modelviewMatrixUniform, false);
+
+	gl.uniform1f(gl.getUniformLocation(this.shaderProgram, "time"), getTime());
+	
+	gl.bindBuffer(gl.ARRAY_BUFFER, this.triangleVertexPositionBuffer);
+	gl.vertexAttribPointer(this.shaderProgram.vertexPositionAttribute, this.triangleVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+	
+	gl.uniform2iv(gl.getUniformLocation(this.shaderProgram, "viewport"), [getRenderTargetWidth(), getRenderTargetHeight()]);
+
+	gl.drawArrays(gl.TRIANGLES, 0, this.triangleVertexPositionBuffer.numItems);
+}
+
+RaytracingDemo.prototype.run = function() {
+	this.initShaders();
+	this.initBuffers();
+
+	gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+	gl.clear(gl.COLOR_BUFFER_BIT);
+
+	this.drawScene();
+};
+
+function init() {	
+	
+
+	env = new RaytracingDemo();	
+	env.run();
+
+    return env;
+}
+
+function compute(canvas)
+{
+    env.initShaders();
+    env.initBuffers();
+
+    gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    env.drawScene();
+}
