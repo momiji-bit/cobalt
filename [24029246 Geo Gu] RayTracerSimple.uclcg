@@ -108,6 +108,19 @@ struct HitInfo {
 	Material material;  // Material at intersection
 	bool enteringPrimitive;  // Whether ray enters the object
 };
+// To make the `HitInfo` structure more useful for Boolean operations, I would suggest a few changes:
+// 1. **Store Multiple Intersection Points**: Right now, `HitInfo` only stores a single `t` value, 
+//    representing one intersection point. For Boolean operations, though, we might need to know all 
+//    the entry and exit points where the ray intersects different shapes. By storing multiple `t` 
+//    values, we could handle complex overlaps and intersections more accurately.
+// 2. **Include Primitive Identifiers**: It would be helpful if `HitInfo` could also keep track of 
+//    which primitive each intersection point belongs to. This way, we’d know exactly which shapes 
+//    are involved in each part of the Boolean operation, making it easier to figure out if the 
+//    intersections should be part of the final shape or not.
+// 3. **Track Inside/Outside Status**: Adding a flag or counter to track whether the ray is inside or 
+//    outside each primitive would make a big difference. For example, if we’re performing a Boolean 
+//    union, we need to know when the ray enters or exits a shape. This way, we could accurately 
+//    combine shapes without losing the correct entry and exit points.
 
 HitInfo getEmptyHit() {  // Returns default HitInfo, representing no intersection
 	return HitInfo(
