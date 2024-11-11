@@ -107,22 +107,6 @@ struct HitInfo {
 	Material material;  // Material at intersection
 	bool enteringPrimitive;  // Whether ray enters the object
 };
-// 1. Store Multiple Intersection Points: 
-// Right now, `HitInfo` only stores a single `t` value, 
-// representing one intersection point. For Boolean operations, though, we might need to know all 
-// the entry and exit points where the ray intersects different shapes. By storing multiple `t` 
-// values, we could handle complex overlaps and intersections more accurately.
-
-// 2. Include Primitive Identifiers: 
-// It would be helpful if `HitInfo` could also keep track of 
-// which primitive each intersection point belongs to. This way, we’d know exactly which shapes 
-// are involved in each part of the Boolean operation, making it easier to figure out if the 
-// intersections should be part of the final shape or not.
-
-// 3. Track Inside/Outside Status: Adding a flag or counter to track whether the ray is inside or 
-// outside each primitive would make a big difference. For example, if we’re performing a Boolean 
-// union, we need to know when the ray enters or exits a shape. This way, we could accurately 
-// combine shapes without losing the correct entry and exit points.
 
 HitInfo getEmptyHit() {  // Returns default HitInfo, representing no intersection
 	return HitInfo(
@@ -213,78 +197,75 @@ HitInfo intersectSphere(const Ray ray, const Sphere sphere, const float tMin, co
 	}
 	return getEmptyHit();
 }
-// Implements ray-plane intersection detection
-HitInfo intersectPlane(const Ray ray, const Plane plane, const float tMin, const float tMax) {
-	// Compute the dot product of ray's direction and plane's normal
-	float denominator = dot(ray.direction, plane.normal);  // Checks if the ray intersects with the plane
 
-	// If the dot product is close to zero, the ray is parallel to the plane, meaning no intersection
+// Implements ray-plane intersection detection
+HitInfo intersectPlane(const Ray ray,const Plane plane, const float tMin, const float tMax) {
+	// Compute dot product of ray direction and plane normal
+	float denominator = dot(ray.direction, plane.normal);  // Checks if ray intersects with plane
+
+	// If dot product is close to zero, ray is parallel to plane, no intersection
 	if (abs(denominator) > 0.0001) {
-		// Calculate the distance 't' from ray's origin to the intersection point on the plane
+		// Calculate distance from ray origin to plane
 		float t = -(dot(ray.origin, plane.normal) + plane.d) / denominator;
 
-		// Check if 't' falls within the valid interval [tMin, tMax]
-		if (isTInInterval(t, tMin, tMax)) {
-			vec3 hitPosition = ray.origin + t * ray.direction;  // Compute the exact intersection position
-			vec3 normal = normalize(plane.normal);  // Use plane's normal vector without altering its direction
-
-			// Return a structure with intersection details
-			return HitInfo(
-				true,  // Intersection happened
-				t,  // Distance to the intersection
-				hitPosition,  // Position where ray intersects the plane
-				normal,  // Normal vector at the intersection
-				plane.material,  // Material of the plane for shading or other purposes
-				denominator < 0.0  // Indicates if the ray is entering the plane
-			);
-		}
-	}
-
-	// Return an empty HitInfo if there's no intersection
-	return getEmptyHit();
-}
-
-// Returns the squared length of a vector, which is useful for quick length comparisons
-float lengthSquared(vec3 x) {
-	return dot(x, x);
-}
-
-// Ray-cylinder intersection detection
-HitInfo intersectCylinder(const Ray ray, const Cylinder cylinder, const float tMin, const float tMax) {
-	vec3 ca = cylinder.direction;  // Cylinder's central axis direction
-	vec3 oc = ray.origin - cylinder.position;  // Vector from ray's origin to cylinder's base center
-
-	// Calculate projections for intersection math
-	float card = dot(ca, ray.direction);  // Projection of ray direction onto cylinder's direction
-	float caoc = dot(ca, oc);  // Projection of oc onto cylinder's direction
-	float a = lengthSquared(ray.direction) - card * card;
-	float b = dot(ray.direction, oc) - card * caoc;
-	float c = lengthSquared(oc) - caoc * caoc - cylinder.radius * cylinder.radius;
-	float h = b * b - a * c;  // Discriminant for the intersection equation
-
-	if (h > 0.0) {  // Discriminant positive means two potential intersection points
-		h = sqrt(h);  // Square root of discriminant gives distance to intersections
-		float t0 = (-b - h) / a;  // First intersection point
-		float t1 = (-b + h) / a;  // Second intersection point
-
-		float smallestTInInterval;  // Check if either intersection is within [tMin, tMax] and find the smallest valid t
-		if (getSmallestTInInterval(t0, t1, tMin, tMax, smallestTInInterval)) {
-			vec3 hitPosition = ray.origin + smallestTInInterval * ray.direction;  // Compute intersection position
-			// Calculate the normal at the intersection by projecting hitPosition onto the cylinder
-			vec3 normal = normalize(hitPosition - cylinder.position - dot(hitPosition - cylinder.position, ca) * ca);
+		// Check if t is within valid range
+		if (t > tMin && t < tMax) {
+			vec3 hitPosition = ray.origin + t * ray.direction;  // Compute intersection position
+			vec3 normal = normalize(plane.normal);  // Keep plane normal direction unchanged
 
 			// Return intersection information
 			return HitInfo(
 				true,  // Intersection occurred
-				smallestTInInterval,  // Distance to the intersection
+				t,  // Intersection distance
 				hitPosition,  // Intersection position
-				normal,  // Normal at the intersection
-				cylinder.material,  // Material of the cylinder
-				true  // Assumes ray is entering the cylinder
+				normal,  // Normal vector
+				plane.material,  // Plane material
+				denominator < 0.0  // Indicates if ray is entering the plane
 			);
 		}
 	}
+
 	// Return empty HitInfo if no intersection
+	return getEmptyHit();
+}
+
+// Returns squared length of a vector, useful for quick length comparisons
+float lengthSquared(vec3 x) {
+	return dot(x, x);
+}
+// Ray-cylinder intersection detection
+HitInfo intersectCylinder(const Ray ray, const Cylinder cylinder, const float tMin, const float tMax) {
+	vec3 ca = cylinder.direction;  // Cylinder's direction vector
+	vec3 oc = ray.origin - cylinder.position;  // Vector from ray origin to cylinder's base center
+
+	float card = dot(ca, ray.direction);  // Component of ray along cylinder's direction
+	float caoc = dot(ca, oc);  // Projection of oc onto cylinder's direction
+	float a = lengthSquared(ray.direction) - card * card;
+	float b = dot(ray.direction, oc) - card * caoc;
+	float c = lengthSquared(oc) - caoc * caoc - cylinder.radius * cylinder.radius;
+	float h = b * b - a * c;
+
+	if (h > 0.0) {  // Indicates two intersection points
+		// Two intersection points t0 and t1 representing distances along the ray direction
+		h = sqrt(h);
+		float t0 = (-b - h) / a;
+		float t1 = (-b + h) / a;
+
+		float smallestTInInterval;  // Check if t0 and t1 are within [tMin, tMax] and get the smallest valid intersection
+		if (getSmallestTInInterval(t0, t1, tMin, tMax, smallestTInInterval)) {
+			vec3 hitPosition = ray.origin + smallestTInInterval * ray.direction;  // Ray-cylinder intersection point
+			vec3 normal = normalize(hitPosition - cylinder.position - dot(hitPosition - cylinder.position, ca) * ca);  // Normal at intersection point
+
+			return HitInfo(
+				true,  // Intersection occurred
+				smallestTInInterval,  // Intersection distance
+				hitPosition,  // Intersection position
+				normal,  // Normal vector
+				cylinder.material,  // Cylinder's material
+				true  // Assumes ray enters the cylinder
+			);
+		}
+	}
 	return getEmptyHit();
 }
 
@@ -525,161 +506,155 @@ float fresnel_(const vec3 viewDirection, const vec3 normal, const float sourceIO
 }
 
 float fresnel(const vec3 viewDirection, const vec3 normal, const float sourceIOR, const float destIOR) {
-    
-    // Using the Schlick approximation to calculate the Fresnel effect
-    #ifdef SOLUTION_FRESNEL
 
-    // Step 1: Normalize view and normal vectors
-    // - First, we normalize 'viewDirection' and 'normal' vectors to make sure their length is 1.
-    // - We invert 'viewDirection' because, in this context, it's assumed to point from the camera to the surface.
-    // - By inverting it, we get 'V', which points towards the view/camera, and it’s more intuitive to use it this way.
-    vec3 V = normalize(-viewDirection);  // V is the normalized direction pointing out from the surface to the camera
-    vec3 N = normalize(normal);          // N is the normalized surface normal vector
+	// Schlick approximation method
+	#ifdef SOLUTION_FRESNEL
 
-    // Step 2: Calculate the angle between the view direction and the surface normal
-    // - We do this by taking the dot product of 'V' and 'N', which gives us the cosine of the angle between them.
-    // - The 'abs' function ensures we’re working with a positive value, keeping things simple and consistent.
-    float cosTheta = abs(dot(V, N));
+	vec3 V = normalize(-viewDirection);
+	vec3 N = normalize(normal);
+	float cosTheta = abs(dot(V, N));
+	float R0 = pow((sourceIOR - destIOR) / (sourceIOR + destIOR), 2.0);
+	float fresnelCoeff = R0 + (1.0 - R0) * pow(1.0 - cosTheta, 5.0);
+	return clamp(fresnelCoeff, 0.0, 1.0); 
 
-    // Step 3: Calculate the base reflection amount, R0
-    // - R0 is the reflection when the view is straight-on to the surface (angle = 0).
-    // - It depends on the indices of refraction (IOR) for each material:
-    //     - 'sourceIOR' is the IOR of the medium where the view ray originates (e.g., air or water).
-    //     - 'destIOR' is the IOR of the medium the ray is entering (e.g., glass).
-    // - R0 formula: ((sourceIOR - destIOR) / (sourceIOR + destIOR))^2
-    // - This formula is based on the Fresnel equations and gives the amount of reflection at a normal angle.
-    float R0 = pow((sourceIOR - destIOR) / (sourceIOR + destIOR), 2.0);
-
-    // Step 4: Calculate the Fresnel reflection coefficient using the Schlick approximation
-    // - Schlick's approximation is a simplified formula for Fresnel that’s easier to compute but still accurate.
-    // - Formula: R ≈ R0 + (1 - R0) * (1 - cosTheta)^5
-    // - The (1 - cosTheta)^5 term causes the reflection to increase smoothly at shallow angles.
-    float fresnelCoeff = R0 + (1.0 - R0) * pow(1.0 - cosTheta, 5.0);
-
-    // Step 5: Clamp the result to ensure it stays between 0 and 1
-    // - We use clamp() to make sure the result stays within [0.0, 1.0], which is the valid range for reflection.
-    // - This helps avoid any possible out-of-bounds results due to numerical errors.
-    return clamp(fresnelCoeff, 0.0, 1.0);
-
-    #else
-    // If SOLUTION_FRESNEL isn't defined, just return a default reflection of 1.0
-    return 1.0;
-    #endif
+	#else
+	// Place your code to compute the Fresnel effect in the #ifdef above
+	return 1.0;
+	#endif
 }
-
 
 // Computes the final color for a fragment, including initial reflection and refraction
 vec3 colorForFragment(const Scene scene, const vec2 fragCoord) {
 
-    // Initialize the initial ray and intersection information
-    Ray initialRay = getFragCoordRay(fragCoord);
-    HitInfo initialHitInfo = intersectScene(scene, initialRay, 0.001, 10000.0);
-    vec3 result = shade(scene, initialRay, initialHitInfo);
+	Ray initialRay = getFragCoordRay(fragCoord);  
+	HitInfo initialHitInfo = intersectScene(scene, initialRay, 0.001, 10000.0);  
+	vec3 result = shade(scene, initialRay, initialHitInfo);
 
-    Ray currentRay;
-    HitInfo currentHitInfo;
+	Ray currentRay;
+	HitInfo currentHitInfo;
 
-    // Reflection calculations
-    currentRay = initialRay;
-    currentHitInfo = initialHitInfo;
+	// Reflection computation
+	currentRay = initialRay;
+	currentHitInfo = initialHitInfo;
 
-    float reflectionWeight = 1.0;  // Initial reflection strength
-    float currentIOR = 1.0;        // Initial index of refraction (air)
-    float sourceIOR = 1.0;
-    float destIOR = 1.0;
+	// Initial reflection strength
+	float reflectionWeight = 1.0;
 
-    const int maxReflectionStepCount = 2;  // Max steps for reflection
-    for (int i = 0; i < maxReflectionStepCount; i++) {
+	// Starting medium is air
+	float currentIOR = 1.0;
 
-        if (!currentHitInfo.hit) break;
+	float sourceIOR = 1.0;
+	float destIOR = 1.0;
 
-        #ifdef SOLUTION_REFLECTION_REFRACTION
-        // Exit if reflection is negligible
-        if (abs(currentHitInfo.material.reflection) < 0.001) break;
-        reflectionWeight *= currentHitInfo.material.reflection;
-        #else
-        // Reflection weighting logic
-        #endif
+	const int maxReflectionStepCount = 2;
+	for(int i = 0; i < maxReflectionStepCount; i++) {
 
-        #ifdef SOLUTION_FRESNEL
-        // Adjust reflection weight based on Fresnel effect
-        sourceIOR = currentIOR;
-        destIOR = currentHitInfo.enteringPrimitive ? currentHitInfo.material.ior : 1.0;
-        reflectionWeight *= fresnel(normalize(currentRay.direction), currentHitInfo.normal, sourceIOR, destIOR);
-        currentIOR = destIOR;
-        #else
-        // Default reflection weight adjustment
-        reflectionWeight *= 0.5;
-        #endif
+		if(!currentHitInfo.hit) break;
 
-        Ray nextRay;
-        #ifdef SOLUTION_REFLECTION_REFRACTION
-        // Calculate the next reflection ray
-        nextRay.origin = currentHitInfo.position;
-        nextRay.direction = reflect(normalize(currentRay.direction), currentHitInfo.normal);
-        #else
-        // Reflection ray calculation
-        #endif
-        currentRay = nextRay;
+		#ifdef SOLUTION_REFLECTION_REFRACTION
+		reflectionWeight *= currentHitInfo.material.reflection;
+		#else
+		// Place reflection weighting code in the ifdef above
+		#endif
 
-        // Update hit info for next step
-        currentHitInfo = intersectScene(scene, currentRay, 0.001, 10000.0);
+		#ifdef SOLUTION_FRESNEL
+		// Compute Fresnel reflection coefficient
+		float fresnelCoeff = fresnel(-currentRay.direction, currentHitInfo.normal, sourceIOR, destIOR);
+		reflectionWeight *= fresnelCoeff;  // Update reflection weight
+		#else
+		// Replace with Fresnel code if desired
+		reflectionWeight *= 0.5;
+		#endif
 
-        // Accumulate reflected color
-        result += reflectionWeight * shade(scene, currentRay, currentHitInfo);
-    }
+		Ray nextRay;
 
-    // Refraction calculations
-    currentRay = initialRay;
-    currentHitInfo = initialHitInfo;
+		#ifdef SOLUTION_REFLECTION_REFRACTION
+		// Compute reflection direction
+		vec3 incident = currentRay.direction;
+		vec3 normal = currentHitInfo.normal;
+		vec3 reflectedDirection = reflect(incident, normal);
+		nextRay.origin = currentHitInfo.position;
+		nextRay.direction = reflectedDirection;
+		#else
+		// Place reflection ray computation code in the ifdef above
+		#endif
 
-    float refractionWeight = 1.0;  // Initial refraction strength
-    const int maxRefractionStepCount = 2;  // Max steps for refraction
-    for (int i = 0; i < maxRefractionStepCount; i++) {
+		currentRay = nextRay;
 
-        #ifdef SOLUTION_REFLECTION_REFRACTION
-        // Exit if refraction is negligible
-        if (abs(currentHitInfo.material.refraction) < 0.001) break;
-        refractionWeight *= currentHitInfo.material.refraction;
-        #else
-        // Refraction weighting logic
-        refractionWeight *= 0.5;
-        #endif
+		currentHitInfo = intersectScene(scene, currentRay, 0.001, 10000.0);      
 
-        #ifdef SOLUTION_FRESNEL
-        // Apply Fresnel adjustment for refraction weight
-        if (i == 0) currentIOR = 1.0;  // Initial medium is air
-        sourceIOR = currentIOR;
-        destIOR = currentHitInfo.enteringPrimitive ? currentHitInfo.material.ior : 1.0;
-        reflectionWeight *= 1.0 - fresnel(normalize(currentRay.direction), currentHitInfo.normal, sourceIOR, destIOR);
-        #else
-        // Fresnel adjustment logic
-        #endif      
+		result += reflectionWeight * shade(scene, currentRay, currentHitInfo);
+	}
 
-        Ray nextRay;
+	// Refraction computation
+	currentRay = initialRay;  
+	currentHitInfo = initialHitInfo;
 
-        #ifdef SOLUTION_REFLECTION_REFRACTION     
-        // Calculate the refraction ray direction
-        if (abs(destIOR) < 0.001) break;
-        float cosalpha = dot(-normalize(currentRay.direction), currentHitInfo.normal);
-        float IOR = sourceIOR / destIOR;
-        if (1.0 + IOR * IOR * (cosalpha * cosalpha - 1.0) < 0.) break;
-        nextRay.origin = currentHitInfo.position;
-        nextRay.direction = refract(normalize(currentRay.direction), currentHitInfo.normal, IOR);
-        currentRay = nextRay;
-        currentIOR = destIOR;
-        #else
-        // Refraction ray and IOR tracking
-        #endif
-        currentHitInfo = intersectScene(scene, currentRay, 0.001, 10000.0);
+	// Initial refraction strength
+	float refractionWeight = 1.0;
 
-        // Accumulate refracted color
-        result += refractionWeight * shade(scene, currentRay, currentHitInfo);
+	const int maxRefractionStepCount = 2;
+	for(int i = 0; i < maxRefractionStepCount; i++) {
 
-        if (!currentHitInfo.hit) break;
-    }
-    return result;
+		#ifdef SOLUTION_REFLECTION_REFRACTION
+		refractionWeight *= currentHitInfo.material.refraction;   
+
+		#else
+		// Place refraction weighting code in the ifdef above
+		refractionWeight *= 0.5;
+		#endif
+
+		#ifdef SOLUTION_FRESNEL
+		// Compute Fresnel transmission coefficient (1 - reflection coefficient)
+		float fresnelCoeff = fresnel(-currentRay.direction, currentHitInfo.normal, sourceIOR, destIOR);
+		refractionWeight *= (1.0 - fresnelCoeff);  // Update refraction weight
+		#else
+		// Place Fresnel code in the ifdef above
+		#endif      
+
+		Ray nextRay;
+
+		#ifdef SOLUTION_REFLECTION_REFRACTION   
+		// Determine source and destination IOR for refraction
+		if (currentHitInfo.enteringPrimitive) {
+			// Ray is entering the object
+			sourceIOR = currentIOR;
+			destIOR = currentHitInfo.material.ior;
+			currentIOR = destIOR;  // Update current medium IOR
+		} else {
+			// Ray is exiting the object
+			sourceIOR = currentIOR;
+			destIOR = 1.0;  // Assuming outside medium is air
+			currentIOR = destIOR;  // Update current medium IOR
+		}
+		// Compute refracted direction
+		vec3 incident = currentRay.direction;
+		vec3 normal = currentHitInfo.normal;
+		float eta = sourceIOR / destIOR;
+		vec3 refractedDirection = refract(incident, normal, eta);
+
+		// Handle total internal reflection
+		if(length(refractedDirection) == 0.0) {
+			// Total internal reflection occurs; exit refraction loop
+			break;
+		}
+		currentRay.origin = currentHitInfo.position + 0.001 * refractedDirection;
+		currentRay.direction = refractedDirection;
+		#else
+		float sourceIOR;
+		float destIOR;
+		// Place refraction ray computation and IOR tracking code in the ifdef above
+		#endif
+		currentHitInfo = intersectScene(scene, currentRay, 0.001, 10000.0);
+
+		result += refractionWeight * shade(scene, currentRay, currentHitInfo);
+
+		if(!currentHitInfo.hit) break;
+
+	}
+	return result;
 }
+
 
 // Common materials
 // IOR data comes from https://refractiveindex.info/, otherwise zero
@@ -725,11 +700,10 @@ void main() {
 	scene.lights[1].color    = 0.5 * vec3(0.1, 0.3, 1.0);  // Set color and intensity of the second light source
 
 	// Primitives
-	bool specialScene = false;  // Boolean variable to determine if a special scene is used
+	bool specialScene = true;  // Boolean variable to determine if a special scene is used
 
 	// Enable special scene setup if SOLUTION_BOOLEAN is defined
 	#ifdef SOLUTION_BOOLEAN
-	specialScene = true;
 	#endif
 
 	if (specialScene) {
